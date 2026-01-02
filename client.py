@@ -8,6 +8,7 @@ HOST = '127.0.0.1'
 PORT = 12345
 
 # Kullanıcı Anahtarları (Client tarafında bilindiği varsayılıyor)
+# Gerçek projede bu anahtarlar veritabanından veya güvenli bir şekilde alınır.
 KEYS = {
     "melisa": "12345678",
     "ahmet":  "87654321",
@@ -17,8 +18,8 @@ KEYS = {
 class ChatClient:
     def __init__(self, master):
         self.master = master
-        master.title("Güvenli Sohbet Projesi")
-        master.geometry("650x500")
+        master.title("Güvenli Sohbet Projesi (Final)")
+        master.geometry("650x550")
         
         # Giriş
         self.username = simpledialog.askstring("Giriş", "Kullanıcı Adı (melisa, ahmet, mehmet):")
@@ -32,7 +33,7 @@ class ChatClient:
         self.left_frame = tk.Frame(master, width=180, bg="#dddddd")
         self.left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
         
-        tk.Label(self.left_frame, text="Kullanıcılar", bg="#dddddd", font=("Arial", 10, "bold")).pack(pady=5)
+        tk.Label(self.left_frame, text="Aktif Kullanıcılar", bg="#dddddd", font=("Arial", 10, "bold")).pack(pady=5)
         
         self.user_listbox = Listbox(self.left_frame, height=20)
         self.user_listbox.pack(fill=tk.BOTH, expand=True, padx=5)
@@ -48,6 +49,7 @@ class ChatClient:
         self.chat_area.pack(fill=tk.BOTH, expand=True, pady=5)
         
         # Mesaj Giriş Alanı
+        tk.Label(self.right_frame, text="Mesajınız (Veya 'kullanici:mesaj' formatı):", anchor="w").pack(fill=tk.X)
         self.msg_entry = tk.Entry(self.right_frame, font=("Arial", 11))
         self.msg_entry.pack(fill=tk.X, pady=5)
         self.msg_entry.bind("<Return>", lambda event: self.send_message()) # Enter tuşuyla gönder
@@ -94,18 +96,37 @@ class ChatClient:
                     messagebox.showinfo("Başarılı", "Parola resme başarıyla gizlendi!")
 
     def send_message(self):
-        """Seçili kişiye şifreli mesaj gönderir"""
+        """
+        GÜNCELLENDİ: Hem listeden seçimle hem de manuel (ahmet:mesaj) 
+        gönderimi destekler (Offline mesajlaşma için gerekli).
+        """
         msg = self.msg_entry.get()
         if not msg: return
         
-        # Listeden seçim yapılmış mı?
-        try:
-            selection = self.user_listbox.curselection()
-            if not selection:
-                messagebox.showwarning("Uyarı", "Lütfen soldaki listeden bir kullanıcı seçin!")
-                return
-            target_user = self.user_listbox.get(selection[0])
-        except:
+        target_user = None
+        message_content = msg
+
+        # 1. YÖNTEM: Manuel Giriş (Örn: ahmet:selam) -> Offline gönderim için ideal
+        if ":" in msg:
+            parts = msg.split(":", 1)
+            possible_user = parts[0].strip()
+            # Eğer ilk kısım geçerli bir kullanıcı ise bunu hedef yap
+            if possible_user in KEYS:
+                target_user = possible_user
+                message_content = parts[1].strip()
+
+        # 2. YÖNTEM: Listeden Seçim -> Online gönderim için ideal
+        if not target_user:
+            try:
+                selection = self.user_listbox.curselection()
+                if selection:
+                    target_user = self.user_listbox.get(selection[0])
+            except:
+                pass
+
+        # Hedef hala yoksa uyar
+        if not target_user:
+            messagebox.showwarning("Uyarı", "Lütfen bir kullanıcı seçin veya 'isim:mesaj' formatında yazın!")
             return
 
         if target_user == self.username:
@@ -113,12 +134,12 @@ class ChatClient:
             return
 
         # Req: Mesajı DES ile şifrele
-        encrypted = des_encrypt(msg, self.key)
+        encrypted = des_encrypt(message_content, self.key)
         final_packet = f"{target_user}:{encrypted}"
         
         try:
             self.sock.send(final_packet.encode('utf-8'))
-            self.update_chat(f"Ben -> {target_user}: {msg}")
+            self.update_chat(f"Ben -> {target_user}: {message_content}")
             self.msg_entry.delete(0, tk.END)
         except Exception as e:
             self.update_chat(f"Hata: {e}")
