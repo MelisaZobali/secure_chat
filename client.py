@@ -4,11 +4,11 @@ import tkinter as tk
 from tkinter import simpledialog, scrolledtext, messagebox, filedialog
 from security_utils import des_encrypt, des_decrypt, lsb_embed
 
-HOST = '127.0.0.1' # Kendi kendine deneyeceksen localhost
+HOST = '127.0.0.1' 
 PORT = 12345
 
-# Kullanıcının kendi anahtarı (Normalde sunucudan güvenli alınır veya bilinir)
-MY_KEY = "12345678" # Varsayılan olarak 'melisa' anahtarı
+# Kullanıcının kendi anahtarı 
+MY_KEY = "12345678" 
 
 class ChatClient:
     def __init__(self, master):
@@ -18,7 +18,7 @@ class ChatClient:
         self.username = simpledialog.askstring("Giriş", "Kullanıcı Adı (melisa, ahmet, mehmet):")
         if not self.username: master.destroy(); return
         
-        # Anahtar seçimi (Basitlik için hardcode ettik, kullanıcıya göre değişmeli)
+        # Anahtar seçimi 
         if self.username == "ahmet": self.key = "87654321"
         elif self.username == "mehmet": self.key = "abcdefgh"
         else: self.key = "12345678" # melisa
@@ -80,21 +80,26 @@ class ChatClient:
                 encrypted_msg = self.sock.recv(1024).decode('utf-8')
                 if not encrypted_msg: break
                 
-                # Şifreli mi yoksa düz metin (sistem mesajı) mi?
-                # Basit bir kontrol: İçinde ':' yoksa veya sunucu mesajıysa
-                if "---" in encrypted_msg or "AKTIF_KULLANICILAR" in encrypted_msg:
+                # --- GÜNCELLEME: Mesaj tipini kontrol et ---
+                # Eğer mesaj sistemsel bir mesajsa (HATA, SERVER vb.) direkt göster
+                if any(x in encrypted_msg for x in ["---", "AKTIF", "HATA", "SERVER"]):
                      self.update_chat(encrypted_msg)
                 else:
-                    # Gelen şifreli mesajı çöz (Req 10-11 mantığı)
-                    # Gelen format normalde şöyledir -> DES_SIFRELI_DATA
-                    # Ancak basitlik için sunucudan plain text simülasyonu da gelebilir.
-                    # Biz sunucunun tekrar şifrelediğini varsayıyoruz.
+                    # Şifreli mesaj olduğunu varsayarak çözmeyi dene
                     try:
                         decrypted = des_decrypt(encrypted_msg, self.key)
-                        self.update_chat(f"Gelen: {decrypted}")
+                        
+                        # Eğer decryption sonucunda yine hata mesajı dönmüşse (security_utils'den)
+                        if "Şifre Çözme Hatası" in decrypted or "Hata" in decrypted:
+                             self.update_chat(f"Sistem: {encrypted_msg}")
+                        else:
+                             self.update_chat(f"Gelen: {decrypted}")
                     except:
-                        self.update_chat(f"Sistem: {encrypted_msg}")
-            except:
+                        # Base64 hatası vb. olursa direkt metni göster
+                        self.update_chat(f"Mesaj: {encrypted_msg}")
+
+            except Exception as e:
+                print(f"Bağlantı hatası: {e}")
                 break
 
     def update_chat(self, msg):
