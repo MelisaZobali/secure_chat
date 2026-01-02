@@ -1,40 +1,66 @@
 import socket
 import threading
 import tkinter as tk
-from tkinter import simpledialog, scrolledtext, messagebox, filedialog
+from tkinter import simpledialog, scrolledtext, messagebox, filedialog, Listbox
 from security_utils import des_encrypt, des_decrypt, lsb_embed
 
 HOST = '127.0.0.1' 
 PORT = 12345
 
-# Kullanıcının kendi anahtarı 
-MY_KEY = "12345678" 
+# Kullanıcı Anahtarları (Client tarafında bilindiği varsayılıyor)
+KEYS = {
+    "melisa": "12345678",
+    "ahmet":  "87654321",
+    "mehmet": "abcdefgh"
+}
 
 class ChatClient:
     def __init__(self, master):
         self.master = master
-        master.title("Güvenli Sohbet (DES + LSB)")
+        master.title("Güvenli Sohbet Projesi")
+        master.geometry("650x500")
         
+        # Giriş
         self.username = simpledialog.askstring("Giriş", "Kullanıcı Adı (melisa, ahmet, mehmet):")
         if not self.username: master.destroy(); return
         
-        # Anahtar seçimi 
-        if self.username == "ahmet": self.key = "87654321"
-        elif self.username == "mehmet": self.key = "abcdefgh"
-        else: self.key = "12345678" # melisa
+        # Kendi anahtarını belirle
+        self.key = KEYS.get(self.username, "12345678")
         
-        # GUI Elemanları
-        self.chat_area = scrolledtext.ScrolledText(master, state='disabled')
-        self.chat_area.pack(padx=10, pady=10)
+        # --- ARAYÜZ (GUI) ---
+        # Sol Panel: Kullanıcı Listesi
+        self.left_frame = tk.Frame(master, width=180, bg="#dddddd")
+        self.left_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
         
-        self.msg_entry = tk.Entry(master, width=50)
-        self.msg_entry.pack(padx=10, pady=5)
+        tk.Label(self.left_frame, text="Kullanıcılar", bg="#dddddd", font=("Arial", 10, "bold")).pack(pady=5)
         
-        self.send_btn = tk.Button(master, text="Gönder", command=self.send_message)
-        self.send_btn.pack(pady=5)
+        self.user_listbox = Listbox(self.left_frame, height=20)
+        self.user_listbox.pack(fill=tk.BOTH, expand=True, padx=5)
+        
+        self.refresh_btn = tk.Button(self.left_frame, text="Listeyi Yenile 🔄", command=self.request_user_list)
+        self.refresh_btn.pack(pady=10)
 
-        self.stego_btn = tk.Button(master, text="Parolayı Resme Gizle (LSB)", command=self.create_stego_image)
-        self.stego_btn.pack(pady=5)
+        # Sağ Panel: Mesajlaşma
+        self.right_frame = tk.Frame(master)
+        self.right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        self.chat_area = scrolledtext.ScrolledText(self.right_frame, state='disabled', height=20)
+        self.chat_area.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Mesaj Giriş Alanı
+        self.msg_entry = tk.Entry(self.right_frame, font=("Arial", 11))
+        self.msg_entry.pack(fill=tk.X, pady=5)
+        self.msg_entry.bind("<Return>", lambda event: self.send_message()) # Enter tuşuyla gönder
+        
+        # Butonlar
+        self.btn_frame = tk.Frame(self.right_frame)
+        self.btn_frame.pack(fill=tk.X)
+        
+        self.send_btn = tk.Button(self.btn_frame, text="GÖNDER ➤", bg="#4CAF50", fg="white", command=self.send_message)
+        self.send_btn.pack(side=tk.LEFT, padx=5)
+
+        self.stego_btn = tk.Button(self.btn_frame, text="Resme Parola Gizle (LSB)", command=self.create_stego_image)
+        self.stego_btn.pack(side=tk.RIGHT, padx=5)
         
         # Sunucuya Bağlan
         try:
@@ -42,13 +68,22 @@ class ChatClient:
             self.sock.connect((HOST, PORT))
             self.sock.send(self.username.encode('utf-8'))
             
+            self.update_chat(f"Hoşgeldin {self.username}! Listeyi yenilemek için butona bas.")
             threading.Thread(target=self.receive_messages, daemon=True).start()
         except Exception as e:
             messagebox.showerror("Hata", f"Sunucuya bağlanılamadı: {e}")
             master.destroy()
 
+    def request_user_list(self):
+        """Sunucudan kullanıcı listesini ister (LIST komutu şifreli gider)"""
+        try:
+            encrypted_cmd = des_encrypt("LIST", self.key)
+            self.sock.send(f"SERVER:{encrypted_cmd}".encode('utf-8'))
+        except:
+            pass
+
     def create_stego_image(self):
-        # Req 3: Parolayı görüntü içine gizleme
+        """Kayıt aşaması için LSB fonksiyonu"""
         file_path = filedialog.askopenfilename(title="Resim Seç (PNG)", filetypes=[("PNG Files", "*.png")])
         if file_path:
             parola = simpledialog.askstring("LSB", "Gizlenecek Parola:")
@@ -56,50 +91,71 @@ class ChatClient:
                 save_path = filedialog.asksaveasfilename(defaultextension=".png")
                 if save_path:
                     lsb_embed(file_path, parola, save_path)
-                    messagebox.showinfo("Başarılı", "Parola resme gizlendi!")
+                    messagebox.showinfo("Başarılı", "Parola resme başarıyla gizlendi!")
 
     def send_message(self):
+        """Seçili kişiye şifreli mesaj gönderir"""
         msg = self.msg_entry.get()
         if not msg: return
         
-        # Format: "ALICI:MESAJ"
-        if ":" in msg:
-            target, text = msg.split(":", 1)
-            # Req 8: Mesajı DES ile şifrele
-            encrypted = des_encrypt(text, self.key)
-            final_packet = f"{target}:{encrypted}"
+        # Listeden seçim yapılmış mı?
+        try:
+            selection = self.user_listbox.curselection()
+            if not selection:
+                messagebox.showwarning("Uyarı", "Lütfen soldaki listeden bir kullanıcı seçin!")
+                return
+            target_user = self.user_listbox.get(selection[0])
+        except:
+            return
+
+        if target_user == self.username:
+            messagebox.showwarning("Uyarı", "Kendine mesaj atamazsın.")
+            return
+
+        # Req: Mesajı DES ile şifrele
+        encrypted = des_encrypt(msg, self.key)
+        final_packet = f"{target_user}:{encrypted}"
+        
+        try:
             self.sock.send(final_packet.encode('utf-8'))
-            self.update_chat(f"Ben -> {target}: {text}")
+            self.update_chat(f"Ben -> {target_user}: {msg}")
             self.msg_entry.delete(0, tk.END)
-        else:
-            messagebox.showwarning("Format", "Mesajı şu formatta yazın: ALICI:MESAJ\nÖrn: ahmet:merhaba")
+        except Exception as e:
+            self.update_chat(f"Hata: {e}")
 
     def receive_messages(self):
+        """Gelen mesajları dinler ve işler"""
         while True:
             try:
-                encrypted_msg = self.sock.recv(1024).decode('utf-8')
-                if not encrypted_msg: break
+                raw_msg = self.sock.recv(1024).decode('utf-8')
+                if not raw_msg: break
                 
-                # --- GÜNCELLEME: Mesaj tipini kontrol et ---
-                # Eğer mesaj sistemsel bir mesajsa (HATA, SERVER vb.) direkt göster
-                if any(x in encrypted_msg for x in ["---", "AKTIF", "HATA", "SERVER"]):
-                     self.update_chat(encrypted_msg)
+                # 1. Liste Güncellemesi
+                if raw_msg.startswith("AKTIF_KULLANICILAR:"):
+                    users_str = raw_msg.split(":")[1]
+                    users = users_str.split(",")
+                    self.user_listbox.delete(0, tk.END)
+                    for user in users:
+                        if user: self.user_listbox.insert(tk.END, user)
+                    continue
+
+                # 2. Sistem Mesajları (Şifresiz göster)
+                if any(x in raw_msg for x in ["---", "HATA", "SERVER"]):
+                     self.update_chat(raw_msg)
+                
+                # 3. Şifreli Kullanıcı Mesajı
                 else:
-                    # Şifreli mesaj olduğunu varsayarak çözmeyi dene
                     try:
-                        decrypted = des_decrypt(encrypted_msg, self.key)
-                        
-                        # Eğer decryption sonucunda yine hata mesajı dönmüşse (security_utils'den)
+                        decrypted = des_decrypt(raw_msg, self.key)
                         if "Şifre Çözme Hatası" in decrypted or "Hata" in decrypted:
-                             self.update_chat(f"Sistem: {encrypted_msg}")
+                             self.update_chat(f"Sistem: {raw_msg}")
                         else:
                              self.update_chat(f"Gelen: {decrypted}")
                     except:
-                        # Base64 hatası vb. olursa direkt metni göster
-                        self.update_chat(f"Mesaj: {encrypted_msg}")
+                        self.update_chat(f"Mesaj: {raw_msg}")
 
             except Exception as e:
-                print(f"Bağlantı hatası: {e}")
+                print(f"Bağlantı koptu: {e}")
                 break
 
     def update_chat(self, msg):

@@ -9,14 +9,14 @@ PORT = 12345
 clients = {}  # {username: socket}
 offline_messages = {}  # {username: [msg1, msg2]}
 
-# Kullanıcı Anahtarları (8 Karakter)
+# Simülasyon Anahtarları (Kullanıcı veritabanı gibi düşünelim)
 USER_KEYS = {
     "melisa": "12345678",
     "ahmet":  "87654321",
     "mehmet": "abcdefgh"
 }
 
-# Sunucu tarafında resim klasörü kontrolü
+# Resim klasörü kontrolü
 if not os.path.exists("server_images"):
     os.makedirs("server_images")
 
@@ -24,7 +24,7 @@ def handle_client(client_socket, addr):
     print(f"[+] Bağlantı: {addr}")
     username = None
     try:
-        # 1. Kullanıcı Adını Al
+        # 1. Giriş ve Kimlik Doğrulama
         username = client_socket.recv(1024).decode('utf-8').strip()
         
         if username not in USER_KEYS:
@@ -33,13 +33,12 @@ def handle_client(client_socket, addr):
             return
 
         # Req 4: Server görselden parola okuma simülasyonu
-        # (Server klasöründe kullanıcının resmi varsa parolasını oradan okur)
         if os.path.exists(f"server_images/{username}.png"):
             extracted_pass = lsb_extract(f"server_images/{username}.png")
-            print(f"[{username}] Resimden Parola: {extracted_pass}")
+            print(f"[{username}] Resimden Parola Okundu: {extracted_pass}")
         
         clients[username] = client_socket
-        print(f"[+] {username} bağlandı.")
+        print(f"[+] {username} sisteme giriş yaptı.")
 
         # Req 7: Offline mesajları ilet
         if username in offline_messages and offline_messages[username]:
@@ -54,21 +53,25 @@ def handle_client(client_socket, addr):
             encrypted_msg = client_socket.recv(1024).decode('utf-8')
             if not encrypted_msg: break
             
+            # Format: HEDEF:ŞİFRELİ_MESAJ
             if ":" in encrypted_msg:
                 target, cipher = encrypted_msg.split(":", 1)
+                target = target.strip() # Boşluk temizliği
                 
-                # Req 10: Server gönderenin anahtarıyla çözer
+                # ADIM 1: Mesajı GÖNDERENİN anahtarıyla çöz
                 sender_key = USER_KEYS[username]
                 plain_text = des_decrypt(cipher, sender_key)
-                print(f"[{username} -> {target}]: {plain_text}")
+                print(f"[{username} -> {target}] Çözülen İçerik: {plain_text}")
 
+                # ADIM 2: Kullanıcı Listesi İsteği mi?
                 if target == "SERVER" and plain_text == "LIST":
                     active = ",".join(clients.keys())
-                    client_socket.send(f"SERVER:{des_encrypt('Aktif: ' + active, sender_key)}".encode('utf-8'))
+                    client_socket.send(f"AKTIF_KULLANICILAR:{active}".encode('utf-8'))
                     continue
 
+                # ADIM 3: Hedefe Yönlendirme
                 if target in USER_KEYS:
-                    # Req 11: Alıcının anahtarıyla tekrar şifrele
+                    # Mesajı ALICININ anahtarıyla tekrar şifrele
                     target_key = USER_KEYS[target]
                     re_encrypted = des_encrypt(f"{username}: {plain_text}", target_key)
                     
@@ -76,14 +79,14 @@ def handle_client(client_socket, addr):
                         try: 
                             clients[target].send(re_encrypted.encode('utf-8'))
                         except:
-                            # Hata olursa offline yap
+                            # Gönderim hatası olursa offline'a at
                             if target not in offline_messages: offline_messages[target] = []
-                            offline_messages[target].append(f"{username}: {plain_text}")
+                            offline_messages[target].append(f"{username} (Offline): {plain_text}")
                     else:
-                        # Req 6: Offline sakla
+                        # Req 6: Hedef Offline ise sakla
                         if target not in offline_messages: offline_messages[target] = []
                         offline_messages[target].append(f"{username}: {plain_text}")
-                        print(f"[{target}] Offline, mesaj saklandı.")
+                        print(f"[{target}] Çevrimdışı. Mesaj saklandı.")
 
     except Exception as e:
         print(f"Hata ({username}): {e}")
@@ -95,7 +98,7 @@ def start_server():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind((HOST, PORT))
     server.listen(5)
-    print(f"[*] Sunucu {HOST}:{PORT} çalışıyor...")
+    print(f"[*] Sunucu {HOST}:{PORT} üzerinde çalışıyor...")
     while True:
         client, addr = server.accept()
         threading.Thread(target=handle_client, args=(client, addr)).start()
